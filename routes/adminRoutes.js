@@ -7,6 +7,11 @@ const path = require('path');
 const Notice = require('../models/Notice');
 const multer = require('multer');
 const fs = require('fs');
+const adminAuth = require('../middleware/adminAuth');
+const jwt = require('jsonwebtoken');
+
+
+
 
 // Storage setup
 // const storage = multer.diskStorage({
@@ -64,7 +69,7 @@ const upload = multer({
 router.post('/add', upload.fields([
   { name: 'image', maxCount: 1 },
   { name: 'file', maxCount: 1 },
-]), async (req, res) => {
+]), adminAuth, async (req, res) => {
   try {
     const { title, description } = req.body;
     if (!title) return res.status(400).json({ message: 'Title is required' });
@@ -84,20 +89,29 @@ router.post('/add', upload.fields([
   }
 });
 
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
 
+router.post('/login', (req, res) => {
+  const { email, password } = req.body;
   const adminEmail = process.env.ADMIN_EMAIL;
   const adminPassword = process.env.ADMIN_PASSWORD;
 
   if (email === adminEmail && password === adminPassword) {
-    res.status(200).json({ message: 'Admin login successful' });
-  } else {
-    res.status(401).json({ message: 'Login failed' });
+    const token = jwt.sign(
+      { email, isAdmin: true },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    return res.status(200).json({
+      message: 'Admin login successful',
+      token,
+    });
   }
+
+  return res.status(401).json({ message: 'Login failed' });
 });
 
-router.get('/assignments', async (req, res, next) => {
+router.get('/assignments', adminAuth, async (req, res, next) => {
   try {
     const assignments = await Assignment.find().populate('studentId', 'fullName email');
     res.status(200).json(assignments);
@@ -107,7 +121,7 @@ router.get('/assignments', async (req, res, next) => {
 });
 
 // PATCH /api/admin/assignments/:id/remark
-router.patch('/assignments/:id/remark', async (req, res, next) => {
+router.patch('/assignments/:id/remark', adminAuth, async (req, res, next) => {
   try {
     const assignmentId = req.params.id;
     const { remark } = req.body;
@@ -131,10 +145,9 @@ router.patch('/assignments/:id/remark', async (req, res, next) => {
 // routes/admin.js or similar
 
 
-// GET all students
-router.get('/users', async (req, res) => {
+router.get('/users', adminAuth, async (req, res) => {
   try {
-    const students = await Student.find().select('-password'); // exclude passwords
+    const students = await Student.find().select('-password');
     res.json(students);
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch users' });
@@ -142,19 +155,29 @@ router.get('/users', async (req, res) => {
 });
 
 
-
-// DELETE /api/admin/users/:id
-router.delete('/users/:id', async (req, res) => {
+router.delete('/users/:id', adminAuth, async (req, res) => {
   try {
-    await Student.findByIdAndDelete(req.params.id);
+    const student = await Student.findByIdAndDelete(req.params.id);
+    if (!student) {
+      return res.status(404).json({ message: 'User not found' });
+    }
     res.json({ message: 'User deleted successfully' });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: 'Failed to delete user' });
   }
 });
 
-router.delete('/assignments/:id', async (req, res) => {
+// router.delete('/assignments/:id', async (req, res) => {
+//   try {
+//     await Assignment.findByIdAndDelete(req.params.id);
+//     res.json({ message: 'Assignment deleted successfully' });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: 'Failed to delete assignment' });
+//   }
+// });
+
+router.delete('/assignments/:id', adminAuth, async (req, res) => {
   try {
     await Assignment.findByIdAndDelete(req.params.id);
     res.json({ message: 'Assignment deleted successfully' });
@@ -165,7 +188,7 @@ router.delete('/assignments/:id', async (req, res) => {
 });
 
 // DELETE Notice by ID
-router.delete('/notices/:id', async (req, res) => {
+router.delete('/notices/:id', adminAuth, async (req, res) => {
   try {
     const deleted = await Notice.findByIdAndDelete(req.params.id);
     if (!deleted) {
@@ -178,7 +201,24 @@ router.delete('/notices/:id', async (req, res) => {
   }
 });
 
-
+// router.get('/notices/all/admin', adminAuth, async (req, res) => {
+//   try {
+//     const notices = await Notice.find().sort({ createdAt: -1 });
+//     res.status(200).json(notices);
+//   } catch (err) {
+//     console.error('Error fetching notices for student:', err);
+//     res.status(500).json({ message: 'Failed to load notices' });
+//   }
+// });
+router.get('/notices/all/admin', adminAuth, async (req, res) => {
+  try {
+    const notices = await Notice.find().sort({ createdAt: -1 });
+    res.status(200).json(notices);
+  } catch (err) {
+    console.error('Error fetching notices for admin:', err);
+    res.status(500).json({ message: 'Failed to load notices' });
+  }
+});
 module.exports = router;
 
 

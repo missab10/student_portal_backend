@@ -8,6 +8,11 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const Notice = require('../models/Notice');
+const jwt = require('jsonwebtoken');
+const studentAuth = require('../middleware/studentAuth');
+
+
+
 // Storage config for multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -53,7 +58,8 @@ router.post('/', async (req, res, next) => {
   }
 });
 
-// Login Route
+
+
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
@@ -75,8 +81,15 @@ router.post('/login', async (req, res, next) => {
       throw new Error('Invalid credentials');
     }
 
+    const token = jwt.sign(
+      { id: student._id, email: student.email, isAdmin: false },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
     res.status(200).json({
       message: 'Login successful',
+      token,
       student: {
         id: student._id,
         fullName: student.fullName,
@@ -88,46 +101,50 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
-// Assignment Route
-router.post('/assignment', upload.single('pdf'), async (req, res, next) => {
-  try {
-    const { title, description, studentId } = req.body;
-    const pdfFilePath = req.file ? req.file.path : null;
 
-    if (!title || !studentId || !pdfFilePath) {
-      res.status(400);
-      throw new Error('Title, student ID, and PDF are required');
+router.post(
+  '/assignment',
+  studentAuth, // ✅ protect with studentAuth
+  upload.single('pdf'),
+  async (req, res, next) => {
+    try {
+      const { title, description } = req.body;
+      const studentId = req.student.id; // ✅ get from verified token
+      const pdfFilePath = req.file ? req.file.path : null;
+
+      if (!title || !studentId || !pdfFilePath) {
+        res.status(400);
+        throw new Error('Title, student ID, and PDF are required');
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(studentId)) {
+        res.status(400);
+        throw new Error('Invalid student ID');
+      }
+
+      const student = await Student.findById(studentId);
+      if (!student) {
+        res.status(404);
+        throw new Error('Student not found');
+      }
+
+      const assignment = await Assignment.create({
+        title,
+        description,
+        studentId,
+        pdf: pdfFilePath,
+      });
+
+      res.status(201).json({ message: 'Assignment created', assignment });
+    } catch (error) {
+      next(error);
     }
-
-    // Validate studentId is a valid ObjectId
-    if (!mongoose.Types.ObjectId.isValid(studentId)) {
-      res.status(400);
-      throw new Error('Invalid student ID');
-    }
-
-    // Check if student exists
-    const student = await Student.findById(studentId);
-    if (!student) {
-      res.status(404);
-      throw new Error('Student not found');
-    }
-
-    const assignment = await Assignment.create({
-      title,
-      description,
-      studentId,
-      pdf: pdfFilePath
-    });
-
-    res.status(201).json({ message: 'Assignment created', assignment });
-  } catch (error) {
-    next(error);
   }
-});
+);
 
 
 // 📄 View Assignments by Student ID
-router.get('/assignments/:studentId', async (req, res, next) => {
+router.get('/assignments/:studentId', studentAuth, async (req, res, next) => {
   try {
     const { studentId } = req.params;
 
@@ -146,21 +163,21 @@ router.get('/assignments/:studentId', async (req, res, next) => {
 
 
 // router.get('/:id', async (req, res) => {
+//   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+//     return res.status(400).json({ message: 'Invalid student ID' });
+//   }
+
 //   try {
-//     const student = await Student.findById(req.params.id).select('-password');
-//     if (!student) {
-//       return res.status(404).json({ message: 'Student not found' });
-//     }
-//     res.json(student);
+//     const student = await Student.findById(req.params.id);
+//     if (!student) return res.status(404).json({ message: 'Student not found' });
+//     res.status(200).json(student);
 //   } catch (err) {
-//     console.error(err);
 //     res.status(500).json({ message: 'Server error' });
 //   }
 // });
 
 
-
-router.get('/:id', async (req, res) => {
+router.get('/:id', studentAuth, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ message: 'Invalid student ID' });
   }
@@ -176,7 +193,7 @@ router.get('/:id', async (req, res) => {
 
 
 
-router.put('/edit-profile/:id', async (req, res, next) => {
+router.put('/edit-profile/:id', studentAuth, async (req, res, next) => {
   try {
     const { id } = req.params;
     const { fullName, email, age, phoneNumber, currentPassword, newPassword } = req.body;
@@ -253,15 +270,11 @@ router.put('/edit-profile/:id', async (req, res, next) => {
 });
 
 
-router.get('/notices/all', async (req, res) => {
-  try {
-    const notices = await Notice.find().sort({ createdAt: -1 });
-    res.status(200).json(notices);
-  } catch (err) {
-    console.error('Error fetching notices for student:', err);
-    res.status(500).json({ message: 'Failed to load notices' });
-  }
+router.get('/notices/all', studentAuth, async (req, res) => {
+  const notices = await Notice.find().sort({ createdAt: -1 });
+  res.status(200).json(notices);
 });
+
 
 
 module.exports = router;
